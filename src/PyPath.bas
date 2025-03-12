@@ -7,12 +7,17 @@ Option Explicit
       ByVal lpszShortPath As String, _
       ByVal lpszLongPath As String, _
       ByVal cchBuffer As Long) As Long
+  Private Declare PtrSafe Function GetFileAttributesW Lib "kernel32" (ByVal lpFileName As LongPtr) As Long
 #Else
   Private Declare Function GetLongPathName Lib "kernel32" Alias "GetLongPathNameA" ( _
       ByVal lpszShortPath As String, _
       ByVal lpszLongPath As String, _
       ByVal cchBuffer As Long) As Long
+  Private Declare Function GetFileAttributesW Lib "kernel32" (ByVal lpFileName As Long) As Long
 #End If
+
+Private Const INVALID_FILE_ATTRIBUTES As Long = -1
+Private Const FILE_ATTRIBUTE_DIRECTORY As Long = &H10
 
 Public Const CUR_DIR As String = "."
 Public Const PAR_DIR As String = ".."
@@ -224,7 +229,7 @@ End Function
 Public Function Exists(ByVal Path As String) As Boolean
 Attribute Exists.VB_Description = "Return True if path refers to an existing path."
     Path = PyPath.AbsPath(Path)
-    Exists = FileSystem.Dir(Path, vbDirectory + vbHidden) <> ""
+    Exists = GetFileAttributes(Path) <> INVALID_FILE_ATTRIBUTES
 End Function
 
 '@Description "Return the argument with an initial component of ~ or ~user replaced by that user's home directory. USERPROFILE will be used if set, otherwise a combination of HOMEPATH and HOMEDRIVE will be used. An initial ~user is handled by checking that the last directory component of the current user's home directory matches USERNAME, and replacing it if so. If the expansion fails or if the path does not begin with a tilde, the path is returned unchanged."
@@ -363,18 +368,22 @@ End Function
 Public Function IsDir(ByVal Path As String) As Boolean
 Attribute IsDir.VB_Description = "Return True if path is an existing directory."
     Path = PyPath.AbsPath(Path)
-    If FileSystem.Dir(Path, VbFileAttribute.vbDirectory) <> "" Then
-        IsDir = (FileSystem.GetAttr(Path) And VbFileAttribute.vbDirectory) <> 0
-    Else
-        IsDir = False
-    End If
+
+    Dim attr As Long
+    attr = GetFileAttributes(Path)
+
+    IsDir = (attr <> INVALID_FILE_ATTRIBUTES) And ((attr And FILE_ATTRIBUTE_DIRECTORY) <> 0)
 End Function
 
 '@Description "Return True if path is an existing regular file."
 Public Function IsFile(ByVal Path As String) As Boolean
 Attribute IsFile.VB_Description = "Return True if path is an existing regular file."
     Path = PyPath.AbsPath(Path)
-    IsFile = FileSystem.Dir(Path) <> ""
+
+    Dim attr As Long
+    attr = GetFileAttributes(Path)
+
+    IsFile = (attr <> INVALID_FILE_ATTRIBUTES) And ((attr And FILE_ATTRIBUTE_DIRECTORY) = 0)
 End Function
 
 '@Description "Join one or more path segments intelligently. The return value is the concatenation of path and all members of Paths(), with exactly one directory separator following each non-empty part, except the last. That is, the result will only end in a separator if the last part is either empty or ends in a separator. If a segment is an absolute path (which on Windows requires both a drive and a root), then all previous segments are ignored and joining continues from the absolute path segment."
@@ -802,4 +811,15 @@ Private Function GetFSO() As Object
     End If
 
     Set GetFSO = FSO
+End Function
+
+Private Function GetFileAttributes(ByVal Path As String) As Long
+    Dim PathW As String
+    If Strings.Len(Path) >= 248 Then
+        PathW = "\\?\" & Path
+    Else
+        PathW = Path
+    End If
+
+    GetFileAttributes = GetFileAttributesW(StrPtr(PathW))
 End Function
