@@ -268,7 +268,7 @@ Attribute ExpandUser.VB_Description = "Return the argument with an initial compo
 
     If i <> 1 Then '~user
         Dim TargetUser As String
-        TargetUser = Strings.Left(Path, i)
+        TargetUser = Strings.Mid(Path, 2, i - 1)
         Dim CurrentUser As String
         CurrentUser = Interaction.Environ("USERNAME")
 
