@@ -2,7 +2,7 @@ Attribute VB_Name = "package"
 '@Folder("PyPathProject")
 '{
 '  "name": "PyPath",
-'  "version": "1.0.0",
+'  "version": "1.0.1",
 '  "description": "Module os.path form python.",
 '  "author": "artemdorozhkin",
 '  "git": "https://github.com/artemdorozhkin/pypath.git",

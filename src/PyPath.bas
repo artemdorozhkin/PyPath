@@ -8,14 +8,50 @@ Option Explicit
       ByVal lpszLongPath As String, _
       ByVal cchBuffer As Long) As Long
   Private Declare PtrSafe Function GetFileAttributesW Lib "kernel32" (ByVal lpFileName As LongPtr) As Long
+  Private Declare PtrSafe Function CreateFileW Lib "kernel32" (ByVal lpFileName As LongPtr, ByVal dwDesiredAccess As Long, ByVal dwShareMode As Long, ByVal lpSecurityAttributes As LongPtr, ByVal dwCreationDisposition As Long, ByVal dwFlagsAndAttributes As Long, ByVal hTemplateFile As LongPtr) As LongPtr
+  Private Declare PtrSafe Function GetFileTime Lib "kernel32" (ByVal hFile As LongPtr, lpCreationTime As FILETIME, lpLastAccessTime As FILETIME, lpLastWriteTime As FILETIME) As Long
+  Private Declare PtrSafe Function CloseHandle Lib "kernel32" (ByVal hObject As LongPtr) As Long
+  Private Declare PtrSafe Function FileTimeToLocalFileTime Lib "kernel32" (ByRef lpFileTime As FILETIME, ByRef lpLocalFileTime As FILETIME) As Long
+  Private Declare PtrSafe Function FileTimeToSystemTime Lib "kernel32" (ByRef lpFileTime As FILETIME, ByRef lpSystemTime As SYSTEMTIME) As Long
+  Private Declare PtrSafe Function GetFileSizeEx Lib "kernel32" (ByVal hFile As LongPtr, ByRef lpFileSize As Currency) As Long
+  Private Declare PtrSafe Function GetCurrentDirectoryW Lib "kernel32" (ByVal nBufferLength As Long, ByVal lpBuffer As LongPtr) As Long
 #Else
   Private Declare Function GetLongPathName Lib "kernel32" Alias "GetLongPathNameA" ( _
       ByVal lpszShortPath As String, _
       ByVal lpszLongPath As String, _
       ByVal cchBuffer As Long) As Long
   Private Declare Function GetFileAttributesW Lib "kernel32" (ByVal lpFileName As Long) As Long
+  Private Declare Function CreateFileW Lib "kernel32" (ByVal lpFileName As Long, ByVal dwDesiredAccess As Long, ByVal dwShareMode As Long, ByVal lpSecurityAttributes As Long, ByVal dwCreationDisposition As Long, ByVal dwFlagsAndAttributes As Long, ByVal hTemplateFile As Long) As Long
+  Private Declare Function GetFileTime Lib "kernel32" (ByVal hFile As Long, lpCreationTime As FILETIME, lpLastAccessTime As FILETIME, lpLastWriteTime As FILETIME) As Long
+  Private Declare Function CloseHandle Lib "kernel32" (ByVal hObject As Long) As Long
+  Private Declare Function FileTimeToLocalFileTime Lib "kernel32" (ByRef lpFileTime As FILETIME, ByRef lpLocalFileTime As FILETIME) As Long
+  Private Declare Function FileTimeToSystemTime Lib "kernel32" (ByRef lpFileTime As FILETIME, ByRef lpSystemTime As SYSTEMTIME) As Long
+  Private Declare Function GetFileSizeEx Lib "kernel32" (ByVal hFile As Long, ByRef lpFileSize As Currency) As Long
+  Private Declare Function GetCurrentDirectoryW Lib "kernel32" (ByVal nBufferLength As Long, ByVal lpBuffer As Long) As Long
 #End If
 
+Private Type FILETIME
+    dwLowDateTime As Long
+    dwHighDateTime As Long
+End Type
+
+Private Type SYSTEMTIME
+    wYear As Integer
+    wMonth As Integer
+    wDayOfWeek As Integer
+    wDay As Integer
+    wHour As Integer
+    wMinute As Integer
+    wSecond As Integer
+    wMilliseconds As Integer
+End Type
+
+Private Const GENERIC_READ As Long = &H80000000
+Private Const FILE_SHARE_READ As Long = &H1
+Private Const FILE_SHARE_WRITE As Long = &H2
+Private Const OPEN_EXISTING As Long = 3
+Private Const FILE_FLAG_NO_BUFFERING As Long = &H20000000
+Private Const FILE_FLAG_BACKUP_SEMANTICS As Long = &H2000000
 Private Const INVALID_FILE_ATTRIBUTES As Long = -1
 Private Const FILE_ATTRIBUTE_DIRECTORY As Long = &H10
 
@@ -31,7 +67,7 @@ Public Const DEV_NULL As String = "nul"
 Public Function AbsPath(ByVal Path As String) As String
 Attribute AbsPath.VB_Description = "Return a normalized absolutized version of the pathname path."
     Dim CWD As String
-    CWD = FileSystem.CurDir()
+    CWD = GetCWD()
 
     If Not PyPath.IsAbs(Path) Then
         Path = PyPath.Join(CWD, Path)
@@ -327,25 +363,38 @@ End Function
 '@Description "Return the time of last access of path."
 Public Function GetATime(ByVal Path As String) As Double
 Attribute GetATime.VB_Description = "Return the time of last access of path."
-    GetATime = GetFSO.GetFile(Path).DateLastAccessed
+    GetATime = GetFileTimeValue(Path, "Access")
 End Function
 
 '@Description "Return the creation time for path."
 Public Function GetCTime(ByVal Path As String) As Double
 Attribute GetCTime.VB_Description = "Return the creation time for path."
-    GetCTime = GetFSO.GetFile(Path).DateCreated
+    GetCTime = GetFileTimeValue(Path, "Creation")
 End Function
 
 '@Description "Return the time of last modification of path."
 Public Function GetMTime(ByVal Path As String) As Double
 Attribute GetMTime.VB_Description = "Return the time of last modification of path."
-    GetMTime = GetFSO.GetFile(Path).DateLastModified
+    GetMTime = GetFileTimeValue(Path, "Modified")
 End Function
 
 '@Description "Return the size, in bytes, of path."
-Public Function GetSize(ByVal Path As String) As Long
+Public Function GetSize(ByVal Path As String) As Currency
 Attribute GetSize.VB_Description = "Return the size, in bytes, of path."
-    GetSize = GetFSO.GetFile(Path).Size
+  #If VBA7 Then
+    Dim hFile As LongPtr
+  #Else
+    Dim hFile As Long
+  #End If
+    hFile = OpenFileHandle(Path)
+    If hFile = -1 Then Exit Function
+
+    Dim FileSize As Currency
+    If GetFileSizeEx(hFile, FileSize) <> 0 Then
+        GetSize = FileSize * 10000
+    End If
+
+    CloseHandle hFile
 End Function
 
 '@Description "Return True if path is an absolute pathname. That it begins with two (back)slashes, or a drive letter, colon, and (back)slash together."
@@ -527,7 +576,7 @@ Attribute RealPath.VB_Description = "Return the canonical path of the specified 
     Const NEW_UNC_PREFIX = "\\"
 
     Dim CWD As String
-    CWD = FileSystem.CurDir()
+    CWD = GetCWD()
 
     If PyPath.NormCase(Path) = DEV_NULL Then
         RealPath = "\\.\NULL"
@@ -804,22 +853,82 @@ Private Function Min(ParamArray Args() As Variant) As Variant
     Min = MinValue
 End Function
 
-Private Function GetFSO() As Object
-    Static FSO As Object
-    If FSO Is Nothing Then
-        Set FSO = CreateObject("Scripting.FileSystemObject")
-    End If
-
-    Set GetFSO = FSO
+Private Function GetFileAttributes(ByVal Path As String) As Long
+    GetFileAttributes = GetFileAttributesW(CPathW(Path))
 End Function
 
-Private Function GetFileAttributes(ByVal Path As String) As Long
-    Dim PathW As String
+#If VBA7 Then
+  Private Function OpenFileHandle(ByVal Path As String) As LongPtr
+#Else
+  Private Function OpenFileHandle(ByVal Path As String) As Long
+#End If
+    OpenFileHandle = CreateFileW( _
+        lpFileName:=CPathW(Path), _
+        dwDesiredAccess:=GENERIC_READ, _
+        dwShareMode:=FILE_SHARE_READ Or FILE_SHARE_WRITE, _
+        lpSecurityAttributes:=0, _
+        dwCreationDisposition:=OPEN_EXISTING, _
+        dwFlagsAndAttributes:=FILE_FLAG_BACKUP_SEMANTICS Or FILE_FLAG_NO_BUFFERING, _
+        hTemplateFile:=0 _
+    )
+End Function
+
+#If VBA7 Then
+  Private Function CPathW(ByVal Path As String) As LongPtr
+#Else
+  Private Function CPathW(ByVal Path As String) As Long
+#End If
     If Strings.Len(Path) >= 248 Then
-        PathW = "\\?\" & Path
+        CPathW = StrPtr("\\?\" & Path)
     Else
-        PathW = Path
+        CPathW = StrPtr(Path)
+    End If
+End Function
+
+Private Function GetFileTimeValue(ByVal FilePath As String, ByVal TimeType As String) As Double
+  #If VBA7 Then
+    Dim hFile As LongPtr
+  #Else
+    Dim hFile As Long
+  #End If
+    hFile = OpenFileHandle(FilePath)
+    If hFile = -1 Then Exit Function
+
+    Dim ftCreation As FILETIME
+    Dim ftAccess As FILETIME
+    Dim ftModified As FILETIME
+    Dim ftLocal As FILETIME
+    If GetFileTime(hFile, ftCreation, ftAccess, ftModified) <> 0 Then
+        Dim st As SYSTEMTIME
+        Select Case TimeType
+            Case "Creation"
+                FileTimeToLocalFileTime ftCreation, ftLocal
+            Case "Access"
+                FileTimeToLocalFileTime ftAccess, ftLocal
+            Case "Modified"
+                FileTimeToLocalFileTime ftModified, ftLocal
+        End Select
+
+        FileTimeToSystemTime ftLocal, st
+
+        Dim FileDate As Double
+        FileDate = DateTime.DateSerial(st.wYear, st.wMonth, st.wDay) + DateTime.TimeSerial(st.wHour, st.wMinute, st.wSecond)
     End If
 
-    GetFileAttributes = GetFileAttributesW(StrPtr(PathW))
+    CloseHandle hFile
+    GetFileTimeValue = FileDate
+End Function
+
+Private Function GetCWD() As String
+    Dim Length As Long
+    Length = GetCurrentDirectoryW(0, 0)
+
+    If Length = 0 Then Exit Function
+
+    Dim Buffer As String
+    Buffer = Strings.String(Length, VBA.Constants.vbNullChar)
+
+    If GetCurrentDirectoryW(Length, StrPtr(Buffer)) > 0 Then
+        GetCWD = Strings.Left(Buffer, Length - 1)
+    End If
 End Function
